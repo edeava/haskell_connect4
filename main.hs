@@ -1,16 +1,44 @@
 import RoseTree
-import FileReader (getBoard, readMixedFile, MixedFileContent)
-import Connect4 (board, ConnectFour (ConnectFour))
+import FileReader (getBoard, readMixedFile, MixedFileContent, getMoveList)
+import Connect4
 
 exampleTree :: Rose Int
 exampleTree = generateRose (\x -> [x+1, x+2, x+3]) 1 2
 
+createInitialGame :: Board -> ConnectFour
+createInitialGame b = ConnectFour {
+    board = b,
+    nextToPlay = Z, --Zuti je uvek prvi
+    gameState = Open
+}
 
 main :: IO ()
 main = do
-    let filePath = "mixedformat.txt"
-    result <- readMixedFile filePath
-    putStrLn $ "Original tree: " ++ show result
+    let filePath = "testFile.txt"
+    putStrLn $ "Reading from file: " ++ filePath
+
+    -- Read from file
+    mixedContent <- readMixedFile filePath
+
+    -- Load game (board) from file
+    let loadedBoard = getBoard mixedContent
+    putStrLn "Loaded board:"
+    print loadedBoard
+
+    -- Load move list from file
+    let moveList = getMoveList mixedContent
+    putStrLn "Loaded move list:"
+    print moveList
+
+    -- Create initial game state
+    let initialGame = createInitialGame loadedBoard
+
+    -- Apply loaded moves and get final game state
+    let (_, finalGame) = gameStateOp (applyMovesFromList moveList) initialGame
+
+    -- Print the final game
+    putStrLn "Final game state:"
+    print finalGame
 
     -- putStrLn $ "Original tree: " ++ show exampleTree
     -- putStrLn $ "Size of the tree: " ++ show (size exampleTree)

@@ -1,6 +1,6 @@
 module Connect4 where
+import Data.List (transpose, findIndex)
 import RoseTree
-import Data.List (transpose)
 
 data Player = Z | C deriving Eq
 
@@ -21,6 +21,13 @@ instance Show Field where
 data GameState = Open | Won Player | Draw | Invalid String deriving (Show, Eq)
 
 newtype Board = Board [[Field]]
+
+boardDimensions :: Board -> (Int, Int)
+boardDimensions (Board []) = (0, 0)
+boardDimensions (Board (row:rows)) = (length (row:rows), length row)
+
+getCol :: Int -> [[Field]] -> [Field]
+getCol n = map (head . drop n)
 
 instance Show Board where
     show (Board board) = concat [showRow row ++ "\n" | row <- board] where
@@ -61,8 +68,8 @@ instance Monad GameStateOp where
 
 isMoveValid :: Board -> Int -> Either String Bool
 isMoveValid (Board board) col
-    | col < 0 || col >= length (head board) = Left "Dodavanje van granica table"
-    | head (board !! col) == Empty = Right True
+    | col < 0 || col > length (head board) - 1= Left "Dodavanje van granica table"
+    | head (getCol col board) == Empty = Right True
     | otherwise = Left "Dodavanje u punu kolonu"
 
 applyMove :: Int -> GameStateOp Bool
@@ -83,47 +90,66 @@ applyMove col = GameStateOp $ \game ->
                     })
                 Left errorMsg ->
                     (False, game { gameState = Invalid errorMsg })
-        _ -> (False, game { gameState = Invalid "Game is already finished" })
+        _ -> (False, game{ gameState = Invalid "Dodavanje nakon zavrsene igre" })
 
 applyMovesFromList :: [Int] -> GameStateOp Bool
 applyMovesFromList = foldr ((>>) . applyMove) (return False)
 
+isEmpty :: Field -> Bool
+isEmpty a = a == Empty
+
 updateColumn :: [[Field]] -> Int -> Player -> [[Field]]
 updateColumn board col player =
-    let column = board !! col
-        updatedColumn = dropPiece column player
-    in take col board ++ [updatedColumn] ++ drop (col + 1) board
-
-dropPiece :: [Field] -> Player -> [Field]
-dropPiece [] _ = []
-dropPiece (Empty:xs) player = Taken player : xs
-dropPiece (x:xs) player = x : dropPiece xs player
+    case findIndex isEmpty (reverse (getCol col board)) of
+        Just index -> 
+            let rIndex = length (getCol col board) - 1 - index
+            in take rIndex board ++
+            [updateRow (board !! rIndex) col player] ++
+            drop (rIndex + 1) board
+        Nothing -> board
+  where
+    updateRow row colIndex newPlayer =
+        take colIndex row ++ [Taken newPlayer] ++ drop (colIndex + 1) row
 
 checkEnd :: Board -> GameState
 checkEnd board@(Board fields)
-    | any (checkWin board) [Z, C] = Won (head [p | p <- [Z, C], checkWin board p])
+    | checkWin board Z = Won Z
+    | checkWin board C = Won C
     | all (notElem Empty) fields = Draw
     | otherwise = Open
 
 checkWin :: Board -> Player -> Bool
-checkWin (Board fields) player =
-    let lines = fields ++ transpose fields ++ diagonals fields ++ diagonals (reverse fields)
-    in any (hasConsecutive 4 (Taken player)) lines
+checkWin board@(Board fields) player =
+    let takenPlayer = Taken player
+        (height, width) = boardDimensions board
+    in  any (hasConsecutive 4 takenPlayer) fields ||                 -- Check rows
+        any (hasConsecutive 4 takenPlayer) (transpose fields) ||     -- Check columns
+        any (hasConsecutive 4 takenPlayer) (diagonals fields) ||     -- Check diagonals
+        any (hasConsecutive 4 takenPlayer) (diagonals (map reverse fields))  -- Check anti-diagonals
 
 hasConsecutive :: Int -> Field -> [Field] -> Bool
-hasConsecutive n x = any ((>= n) . length) . filter (all (== x)) . divvy n 1
+hasConsecutive n x xs
+    | length xs < n = False
+    | take n xs == replicate n x = True
+    | otherwise = hasConsecutive n x (tail xs)
 
 diagonals :: [[a]] -> [[a]]
-diagonals = transpose . zipWith drop [0..]
-
-divvy :: Int -> Int -> [a] -> [[a]]
-divvy n step = takeWhile ((== n) . length) . map (take n) . iterate (drop step)
+diagonals board = diagonalsTopLeft board ++ diagonalsTopRight board
+  where
+    diagonalsTopLeft = concatMap diagonalsFromRowCol . zip [0..]
+    diagonalsTopRight = diagonalsTopLeft . map reverse
+    
+    diagonalsFromRowCol (row, rowFields) = 
+        [getDiagonal board (row, col) | (col, _) <- zip [0..] rowFields, row + col < length board]
+    
+    getDiagonal b (row, col) = 
+        [b !! (row + i) !! (col + i) | i <- [0..min (length b - row - 1) (length (head b) - col - 1)]]
 
 validMoves :: Board -> [Int]
-validMoves board = [col | col <- [0..6], isMsg (isMoveValid board col)]
+validMoves board@(Board fields) = 
+    [col | col <- [0..width-1], any (\row -> row !! col == Empty) fields]
   where
-    isMsg (Right _) = True
-    isMsg (Left _) = False
+    (_, width) = boardDimensions board
 
 generateMoveTree :: ConnectFour -> Int -> Rose ConnectFour
 generateMoveTree initialGame maxDepth = generateRose generateMoves maxDepth initialGame
@@ -131,7 +157,7 @@ generateMoveTree initialGame maxDepth = generateRose generateMoves maxDepth init
     generateMoves :: ConnectFour -> [ConnectFour]
     generateMoves game@ConnectFour{gameState = Open, board = b} =
       [snd $ gameStateOp (applyMove move) game | move <- validMoves b]
-    generateMoves _ = [] --ako nije open -> kraj
+    generateMoves _ = [] --prazni listovi za kraj
 
 getGameState :: Rose ConnectFour -> GameState
 getGameState (Node game _) = gameState game
@@ -144,10 +170,8 @@ countWinningPositions player = foldRose countWins 0
       | otherwise = childrenSum
     countWins childrenSum _ = childrenSum
 
--- Helper function to run a GameStateOp
 runGameStateOp :: GameStateOp a -> ConnectFour -> (a, ConnectFour)
 runGameStateOp = gameStateOp
 
--- Function to execute a move and return the new game state
 executeMove :: Int -> ConnectFour -> ConnectFour
 executeMove col game = snd $ runGameStateOp (applyMove col) game
